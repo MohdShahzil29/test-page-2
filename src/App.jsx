@@ -30,6 +30,9 @@
 //   const copyOptions = [2, 3, 4];
 //   const [copies, setCopies] = useState(2);
 
+//   // NEW: selected slot index for preview (null = none)
+//   const [selectedSlotIndex, setSelectedSlotIndex] = useState(null);
+
 //   // Color palette
 //   const COLORS = {
 //     PRIMARY_BLUE: "#528bad",
@@ -52,11 +55,10 @@
 //     { name: "Black", value: "#000000" },
 //   ];
 
-//   // Correct aspect presets (width / height)
 //   const ASPECT_PRESETS = {
-//     WIDE: 16 / 9,
-//     PORTRAIT: 3 / 4,
-//     SQUARE: 1.0,
+//     WIDE: 53 / 40,
+//     PORTRAIT: 53 / 76,
+//     SQUARE: 1 / 1,
 //   };
 
 //   const [selectedAspectRatio, setSelectedAspectRatio] = useState(
@@ -138,6 +140,7 @@
 //     setAutoCapturing(false);
 //     setShowCaptureNumber(null);
 //     lastAppliedFilterRef.current = { filter: null, photosCount: 0 };
+//     setSelectedSlotIndex(null);
 //   }
 
 //   useEffect(() => {
@@ -265,11 +268,7 @@
 //     return () => window.removeEventListener("keydown", onKey);
 //   }, [step, photosTaken, filter, webcamStarted, copies]);
 
-//   // NEW FILTERS: map filter names to CSS canvas/video filter strings and overlay behaviors
-//   // Filters available: none, burnt-coffee, ocean-wave, old-wood, vintage-may
-
 //   function computedVideoFilter() {
-//     // used for live preview video element
 //     switch (filter) {
 //       case "burnt-coffee":
 //         return "contrast(80%) grayscale(100%) saturate(100%) hue-rotate(0deg) sepia(0%)";
@@ -285,7 +284,6 @@
 //   }
 
 //   function canvasFilterString(name) {
-//     // used for ctx.filter when rasterizing to canvas
 //     switch (name) {
 //       case "burnt-coffee":
 //         return "contrast(80%) grayscale(100%) saturate(100%) hue-rotate(0deg) sepia(0%)";
@@ -301,38 +299,26 @@
 //   }
 
 //   function applyOverlayToCanvas(ctx, filterName, w, h) {
-//     // Draw overlay using composite operations to emulate mix-blend-mode in CSS
 //     if (!filterName || filterName === "none") return;
 
 //     // save state
 //     ctx.save();
-
-//     // default alpha values derived from your CSS
 //     if (filterName === "burnt-coffee") {
-//       // color: #e3dca1, mix-blend-mode: multiply, opacity: 1
 //       ctx.globalAlpha = 1;
 //       ctx.globalCompositeOperation = "multiply";
 //       ctx.fillStyle = "#e3dca1";
 //       ctx.fillRect(0, 0, w, h);
 //     } else if (filterName === "ocean-wave") {
-//       // color: #00e5fa, multiply, opacity: 0.13
 //       ctx.globalAlpha = 0.13;
 //       ctx.globalCompositeOperation = "multiply";
 //       ctx.fillStyle = "#00e5fa";
 //       ctx.fillRect(0, 0, w, h);
 //     } else if (filterName === "old-wood") {
-//       // color: #574400, soft-light, opacity: 1
-//       // Canvas does not support 'soft-light' directly in all browsers; use 'overlay' as a reasonable approximation,
-//       // fallback to 'overlay' or 'soft-light' if available.
 //       ctx.globalAlpha = 1;
-//       // try 'soft-light', but many canvases support 'overlay' more widely; we'll set to 'soft-light' then fallback to 'overlay'
-//       // (some browsers will accept 'soft-light' — if unsupported, it falls back to source-over)
 //       ctx.globalCompositeOperation = "soft-light";
 //       ctx.fillStyle = "#574400";
 //       ctx.fillRect(0, 0, w, h);
-//       // if soft-light not supported, overlay will still look okay
 //     } else if (filterName === "vintage-may") {
-//       // color: #faaa00, mix-blend-mode none, opacity 0.13 -> simply draw semi-transparent rect over image
 //       ctx.globalAlpha = 0.13;
 //       ctx.globalCompositeOperation = "source-over";
 //       ctx.fillStyle = "#faaa00";
@@ -342,126 +328,147 @@
 //     ctx.restore();
 //   }
 
-//   // --- Add these functions somewhere inside your Polaroidish component ---
-
-//   // Build payload for a single slot (the one the user clicked)
-//   async function buildSingleImagePayload(slotIndex) {
+//   // Build full sheet payload (match preview)
+//   async function buildFullSheetPayload() {
 //     const usingLayout = layouts.vertical[totalFrames];
 //     if (!usingLayout) {
 //       throw new Error("Invalid layout for current frames");
 //     }
+//     if (!photosTaken || photosTaken.length === 0) {
+//       showMessage("No photos captured to print");
+//       return null;
+//     }
 
-//     const sheetW = usingLayout.finalWidth;
-//     const sheetH = usingLayout.finalHeight;
+//     const finalW = usingLayout.finalWidth;
+//     const finalH = usingLayout.finalHeight;
 //     const slotW = Math.round(usingLayout.photoWidth);
 //     const slotH = Math.round(usingLayout.photoHeight);
+//     const numCols = usingLayout.numCols;
+//     const numRows = usingLayout.numRows;
+
 //     const gapX = Math.round(
-//       (usingLayout.finalWidth - usingLayout.numCols * slotW) /
-//         (usingLayout.numCols + 1)
+//       (usingLayout.finalWidth - numCols * slotW) / (numCols + 1)
 //     );
 //     const gapY = Math.round(
-//       (usingLayout.finalHeight - usingLayout.numRows * slotH) /
-//         (usingLayout.numRows + 1)
+//       (usingLayout.finalHeight - numRows * slotH) / (numRows + 1)
 //     );
 //     const gx = Math.max(0, gapX);
 //     const gy = Math.max(0, gapY);
 
-//     // determine which photo from photosTaken corresponds to this slot (same logic as getPhotosForFrames)
-//     if (!photosTaken || photosTaken.length === 0) {
-//       throw new Error("No photos captured");
+//     // Create canvas at final size (sheet)
+//     const sheetCanvas = document.createElement("canvas");
+//     sheetCanvas.width = finalW;
+//     sheetCanvas.height = finalH;
+//     const ctx = sheetCanvas.getContext("2d");
+
+//     // Fill background same as preview
+//     ctx.fillStyle = bgColor || COLORS.BASE_WHITE;
+//     ctx.fillRect(0, 0, finalW, finalH);
+
+//     // Regenerate filtered images for each photo (size slotW x slotH)
+//     // photosTaken may be fewer than totalFrames; they are repeated in preview
+//     const regenerated = await Promise.all(
+//       photosTaken.map((p) =>
+//         makeFilteredDataUrl(p.raw, filter, slotW, slotH).catch(() => p.raw)
+//       )
+//     );
+
+//     const slots = [];
+//     for (let i = 0; i < totalFrames; i++) {
+//       const idx = i % regenerated.length;
+//       const src = regenerated[idx];
+//       const column = i % numCols;
+//       const row = Math.floor(i / numCols);
+//       const x = gx + column * (slotW + gx);
+//       const y = gy + row * (slotH + gy);
+
+//       if (src) {
+//         await new Promise((res) => {
+//           const img = new Image();
+//           img.crossOrigin = "anonymous";
+//           img.onload = () => {
+//             const drawW = Math.min(slotW, finalW - x);
+//             const drawH = Math.min(slotH, finalH - y);
+//             ctx.drawImage(img, 0, 0, img.width, img.height, x, y, drawW, drawH);
+//             res(true);
+//           };
+//           img.onerror = () => res(true);
+//           img.src = src;
+//         });
+//       }
+
+//       slots.push({
+//         index: i,
+//         x,
+//         y,
+//         width: slotW,
+//         height: slotH,
+//         photoIndex: idx,
+//       });
 //     }
 
-//     const photoIdx = slotIndex % photosTaken.length;
-//     const photoObj = photosTaken[photoIdx]; // { raw, filtered }
-//     const rawData = photoObj?.raw || photoObj?.filtered;
-//     if (!rawData) {
-//       throw new Error("Photo data missing for selected slot");
-//     }
+//     // Now sheet canvas contains the full sheet exactly how preview draws it (background + images)
+//     const sheetDataUrl = sheetCanvas.toDataURL("image/png");
 
-//     // regenerate image at final slot size with current filter (ensures printer-ready result)
-//     const imageDataUrl = await makeFilteredDataUrl(
-//       rawData,
-//       filter,
-//       slotW,
-//       slotH
-//     ).catch(() => photoObj.filtered || photoObj.raw);
-
-//     // compute position of this slot on the full sheet
-//     const column = slotIndex % usingLayout.numCols;
-//     const row = Math.floor(slotIndex / usingLayout.numCols);
-//     const x = gx + column * (slotW + gx);
-//     const y = gy + row * (slotH + gy);
-
+//     // Build payload with sheet image and per-slot metadata
 //     const payload = {
-//       type: "polaroidish-single-photo",
+//       type: "polaroidish-full-sheet",
 //       createdAt: new Date().toISOString(),
 //       templateId: selectedTemplate?.id || null,
 //       filter,
 //       backgroundColor: bgColor,
 //       sheet: {
-//         width: sheetW,
-//         height: sheetH,
+//         width: finalW,
+//         height: finalH,
 //         units: "px",
 //         dpi: 300,
 //         fileType: "png",
+//         image: sheetDataUrl,
 //       },
 //       page: {
 //         pageIndex: 0,
-//         slots: [
-//           {
-//             index: slotIndex,
-//             x,
-//             y,
-//             width: slotW,
-//             height: slotH,
-//             // full data URL (can be large). If you prefer, upload this to server and send only URL.
-//             image: imageDataUrl,
-//           },
-//         ],
+//         slots: slots.map((s) => ({
+//           index: s.index,
+//           x: s.x,
+//           y: s.y,
+//           width: s.width,
+//           height: s.height,
+//           photoIndex: s.photoIndex,
+//         })),
 //       },
-//       // metadata helpful for printer/server
-//       copies: 1,
+//       copies,
 //       originalPhotosCount: photosTaken.length,
 //     };
 
-//     // show in console with shortened image for readability
+//     // Log truncated + full
 //     const payloadForLog = {
 //       ...payload,
-//       page: {
-//         ...payload.page,
-//         slots: payload.page.slots.map((s) => ({
-//           ...s,
-//           image: s.image ? s.image.slice(0, 120) + "...(truncated)" : null,
-//         })),
+//       sheet: {
+//         ...payload.sheet,
+//         image: payload.sheet.image
+//           ? payload.sheet.image.slice(0, 120) + "...(truncated)"
+//           : null,
 //       },
 //     };
-//     console.log("Single-image print payload (truncated):", payloadForLog);
-//     console.log("Full payload object (with full data:image...):", payload);
+//     console.log("Full-sheet payload (truncated):", payloadForLog);
+//     console.log("Full-sheet payload (full):", payload);
 
 //     return payload;
 //   }
 
-//   // Handler to call when user clicks an image in preview
-//   async function handleImageClick(slotIndex) {
+//   // Handler to call when user clicks the sidebar Proceed button
+//   async function handleProceedToPrintWholeSheet() {
 //     try {
-//       const payload = await buildSingleImagePayload(slotIndex);
+//       showMessage("Preparing sheet for print...");
+//       const payload = await buildFullSheetPayload();
+//       if (!payload) return;
+//       setStep("print");
 
-//       // Example: just alert and log for now
-//       showMessage("Payload built — check console");
-//       // If you want to POST to your print endpoint, uncomment and edit the fetch below:
-//       /*
-//     await fetch("/api/print", {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify(payload),
-//     });
-//     showMessage("Sent to printer");
-//     */
-
+//       showMessage("Sheet prepared — check console for payload");
 //       return payload;
 //     } catch (err) {
-//       console.error("Error building payload:", err);
-//       showMessage("Unable to build payload: " + (err.message || ""));
+//       console.error("Error preparing sheet payload:", err);
+//       showMessage("Failed to prepare sheet: " + (err.message || ""));
 //       return null;
 //     }
 //   }
@@ -1151,7 +1158,7 @@
 //         </div>
 //       )}
 
-//       {/* CAPTURE (with big frame around preview) */}
+//       {/* CAPTURE */}
 //       {step === "capture" && (
 //         <div
 //           style={{
@@ -1333,6 +1340,7 @@
 //                     >
 //                       {Array.from({ length: totalFrames }).map((_, i) => {
 //                         const src = expanded[i];
+//                         const isSelected = selectedSlotIndex === i;
 //                         return (
 //                           <div
 //                             key={i}
@@ -1342,16 +1350,29 @@
 //                               backgroundColor: COLORS.LIGHT_GREY,
 //                               borderRadius: 5,
 //                               overflow: "hidden",
+//                               boxSizing: "border-box",
+//                               border: isSelected
+//                                 ? `4px solid ${COLORS.DEEP_BLUE}`
+//                                 : "4px solid transparent",
+//                               transition: "border 140ms ease",
 //                             }}
 //                           >
 //                             {src ? (
 //                               <img
 //                                 src={src}
 //                                 alt={`Photo ${i + 1}`}
+//                                 onClick={() => {
+//                                   // select the slot on click
+//                                   setSelectedSlotIndex(i);
+//                                 }}
+//                                 onDoubleClick={() => {
+//                                   // double-click to immediately build payload for single slot (optional)
+//                                 }}
 //                                 style={{
 //                                   width: "100%",
 //                                   height: "100%",
 //                                   objectFit: "cover",
+//                                   cursor: "pointer",
 //                                 }}
 //                               />
 //                             ) : (
@@ -1479,12 +1500,15 @@
 //               >
 //                 Apply Filter
 //               </button>
+
+//               {/* Proceed prints the whole sheet as preview */}
 //               <button
-//                 onClick={() => handleImageClick(i)}
+//                 onClick={handleProceedToPrintWholeSheet}
 //                 style={{ ...btnPrimary, width: "100%", marginBottom: "15px" }}
 //               >
-//                 Proceed to Print
+//                 Proceed to Print (whole sheet)
 //               </button>
+
 //               <button
 //                 onClick={() => {
 //                   setPhotosTaken([]);
@@ -1494,6 +1518,7 @@
 //                     photosCount: 0,
 //                   };
 //                   setStep("capture");
+//                   setSelectedSlotIndex(null);
 //                 }}
 //                 style={{ ...btnSecondary, width: "100%" }}
 //               >
@@ -1622,11 +1647,10 @@ export default function Polaroidish() {
     { name: "Black", value: "#000000" },
   ];
 
-  // Correct aspect presets (width / height)
   const ASPECT_PRESETS = {
-    WIDE: 16 / 9,
-    PORTRAIT: 3 / 4,
-    SQUARE: 1.0,
+    WIDE: 53 / 40,
+    PORTRAIT: 53 / 76,
+    SQUARE: 1 / 1,
   };
 
   const [selectedAspectRatio, setSelectedAspectRatio] = useState(
@@ -1669,6 +1693,7 @@ export default function Polaroidish() {
       frames: 4,
       layout: "vertical",
       aspectRatio: ASPECT_PRESETS.PORTRAIT,
+      image: "🖼️ 2x2",
     },
     {
       id: "6v",
@@ -1676,6 +1701,7 @@ export default function Polaroidish() {
       frames: 6,
       layout: "vertical",
       aspectRatio: ASPECT_PRESETS.SQUARE,
+      image: "🖼️ 2x3",
     },
     {
       id: "8v",
@@ -1683,6 +1709,7 @@ export default function Polaroidish() {
       frames: 8,
       layout: "vertical",
       aspectRatio: ASPECT_PRESETS.WIDE,
+      image: "🖼️ 2x4",
     },
   ];
 
@@ -1715,8 +1742,8 @@ export default function Polaroidish() {
     if (!selectedTemplate) return;
 
     setTotalFrames(selectedTemplate.frames);
-    const defaultCopies = Math.floor(selectedTemplate.frames / 2);
-    setCopies(defaultCopies);
+    // FIX: Set copies to match the template frames
+    setCopies(selectedTemplate.frames);
 
     const layoutGroup = layouts[selectedTemplate.layout];
     if (layoutGroup && layoutGroup[selectedTemplate.frames]) {
@@ -2452,6 +2479,21 @@ export default function Polaroidish() {
     background: COLORS.ACCENT_YELLOW,
     border: `2px solid ${COLORS.DEEP_BLUE}`,
   };
+  const btnFilter = {
+    background: COLORS.LIGHT_GREY,
+    color: COLORS.TEXT_BLACK,
+    border: "1px solid #ccc",
+    padding: "8px 12px",
+    borderRadius: "6px",
+    cursor: "pointer",
+    margin: "3px",
+    fontSize: "14px",
+  };
+  const btnFilterSelected = {
+    ...btnFilter,
+    background: COLORS.ACCENT_YELLOW,
+    border: `2px solid ${COLORS.DEEP_BLUE}`,
+  };
 
   // Provide overlay styles for live preview based on current filter
   function previewOverlayStyleFor(filterName) {
@@ -2688,33 +2730,53 @@ export default function Polaroidish() {
             }}
           >
             {templates.map((template) => (
-              <button
+              <div
                 key={template.id}
-                onClick={() => {
-                  setSelectedTemplate(template);
-                  setTotalFrames(template.frames);
-
-                  const autoCopies = Math.floor(template.frames / 2);
-                  setCopies(autoCopies);
-
-                  if (template.aspectRatio)
-                    setSelectedAspectRatio(template.aspectRatio);
-                }}
                 style={{
-                  ...btnTemplate,
-                  backgroundColor:
-                    selectedTemplate?.id === template.id
-                      ? COLORS.ACCENT_YELLOW
-                      : COLORS.LIGHT_GREY,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
                 }}
               >
-                {template.label}
-              </button>
+                <div
+                  style={{
+                    fontSize: "24px",
+                    marginBottom: "10px",
+                    height: "60px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {template.image}
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedTemplate(template);
+                    setTotalFrames(template.frames);
+
+                    // FIX: Set copies to match the template frames
+                    setCopies(template.frames);
+
+                    if (template.aspectRatio)
+                      setSelectedAspectRatio(template.aspectRatio);
+                  }}
+                  style={{
+                    ...btnTemplate,
+                    backgroundColor:
+                      selectedTemplate?.id === template.id
+                        ? COLORS.ACCENT_YELLOW
+                        : COLORS.LIGHT_GREY,
+                  }}
+                >
+                  {template.label}
+                </button>
+              </div>
             ))}
           </div>
 
           <h3 style={{ color: COLORS.TEXT_BLACK, marginBottom: "15px" }}>
-            Number of Copies
+            Number of Photos to Capture
           </h3>
           <div
             style={{
@@ -2731,7 +2793,7 @@ export default function Polaroidish() {
                   if (selectedTemplate && num > selectedTemplate.frames) {
                     setCopies(selectedTemplate.frames);
                     showMessage(
-                      `Copies reduced to ${selectedTemplate.frames} (template has only ${selectedTemplate.frames} frames)`
+                      `Photos reduced to ${selectedTemplate.frames} (template has only ${selectedTemplate.frames} frames)`
                     );
                   } else setCopies(num);
                 }}
@@ -2768,7 +2830,7 @@ export default function Polaroidish() {
             Take Photos
           </h2>
 
-          {/* Outer frame (badya sa frame) */}
+          {/* FIX: Smaller video container */}
           <div
             style={{
               padding: 14,
@@ -2776,8 +2838,7 @@ export default function Polaroidish() {
               borderRadius: 14,
               boxShadow: "0 18px 50px rgba(5,10,30,0.12)",
               border: `6px solid rgba(0,0,0,0.06)`,
-              width: "100%",
-              maxWidth: 600,
+              width: "400px", // Fixed width
               boxSizing: "border-box",
               marginBottom: 20,
             }}
@@ -2864,7 +2925,7 @@ export default function Polaroidish() {
 
           <p style={{ color: "#666", textAlign: "center" }}>
             Press Space to capture • {photosTaken.length} of {copies} photos
-            taken (these will be duplicated to fill the template)
+            taken
             <br />
             {autoCapturing ? "Auto sequence running..." : ""}
           </p>
@@ -3069,23 +3130,46 @@ export default function Polaroidish() {
                 >
                   Filter
                 </label>
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "10px",
-                    borderRadius: "5px",
-                    border: "1px solid #ccc",
-                    backgroundColor: COLORS.BASE_WHITE,
-                  }}
-                >
-                  <option value="none">None</option>
-                  <option value="burnt-coffee">Burnt Coffee</option>
-                  <option value="ocean-wave">Ocean Wave</option>
-                  <option value="old-wood">Old Wood</option>
-                  <option value="vintage-may">Vintage May</option>
-                </select>
+                <div style={{ display: "flex", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setFilter("none")}
+                    style={filter === "none" ? btnFilterSelected : btnFilter}
+                  >
+                    None
+                  </button>
+                  <button
+                    onClick={() => setFilter("burnt-coffee")}
+                    style={
+                      filter === "burnt-coffee" ? btnFilterSelected : btnFilter
+                    }
+                  >
+                    Burnt Coffee
+                  </button>
+                  <button
+                    onClick={() => setFilter("ocean-wave")}
+                    style={
+                      filter === "ocean-wave" ? btnFilterSelected : btnFilter
+                    }
+                  >
+                    Ocean Wave
+                  </button>
+                  <button
+                    onClick={() => setFilter("old-wood")}
+                    style={
+                      filter === "old-wood" ? btnFilterSelected : btnFilter
+                    }
+                  >
+                    Old Wood
+                  </button>
+                  <button
+                    onClick={() => setFilter("vintage-may")}
+                    style={
+                      filter === "vintage-may" ? btnFilterSelected : btnFilter
+                    }
+                  >
+                    Vintage May
+                  </button>
+                </div>
               </div>
 
               <button
