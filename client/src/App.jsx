@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import axios from "axios";
 
 export default function Polaroidish() {
   // refs
@@ -497,25 +498,71 @@ export default function Polaroidish() {
       showMessage("Preparing sheet for print...");
       const payload = await buildFullSheetPayload();
       if (!payload) return;
-
       setStep("print");
 
-      // POST the payload to backend - adjust endpoint as needed
+      // Create FormData object
+      const formData = new FormData();
+      formData.append("copies", String(printCopies));
+      formData.append("filter", filter ?? "");
+      formData.append("templateId", selectedTemplate?.id || "");
+      formData.append("backgroundColor", bgColor ?? "");
+
+      // Convert sheet image to blob (robust: works for URLs and data: URLs)
+      const sheetImage = payload.sheet.image;
+      let blob;
       try {
-        const res = await fetch("/api/print", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          console.warn("Print API returned non-OK:", res.status);
-          showMessage("Prepared sheet but print server returned an error.");
+        if (!sheetImage) throw new Error("No sheet image found in payload");
+        if (sheetImage instanceof Blob) {
+          blob = sheetImage;
         } else {
-          showMessage("Sent to printer");
+          // fetch works for remote URLs and data: URIs in modern browsers
+          const resp = await fetch(sheetImage);
+          blob = await resp.blob();
         }
+      } catch (fetchErr) {
+        console.warn("fetch->blob failed, trying base64 fallback:", fetchErr);
+        // fallback for data:image/...;base64, decode manually
+        if (typeof sheetImage === "string" && sheetImage.startsWith("data:")) {
+          const parts = sheetImage.split(",");
+          const mimeMatch = parts[0].match(/:(.*?);/);
+          const mime = mimeMatch ? mimeMatch[1] : "image/png";
+          const bstr = atob(parts[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) u8arr[n] = bstr.charCodeAt(n);
+          blob = new Blob([u8arr], { type: mime });
+        } else {
+          throw fetchErr; // rethrow if we cannot convert
+        }
+      }
+
+      formData.append("sheetImage", blob, "sheet.png");
+
+      // Optional: debug formData entries
+      for (const pair of formData.entries()) {
+        console.log("formData:", pair[0], pair[1]);
+      }
+
+      // Send with axios
+      const url = "http://localhost:3000/api/print";
+      try {
+        const res = await axios.post(url, formData, {
+          withCredentials: true, // if you need cookies; optional
+          // DO NOT set 'Content-Type' manually here. Let the browser set multipart boundary.
+        });
+
+        console.log("Print response:", res.data);
+        showMessage("Sent to printer");
       } catch (err) {
-        console.error("Error posting to print API", err);
-        showMessage("Prepared sheet (failed to POST, check console).");
+        console.error(
+          "Print API error:",
+          err.response?.data || err.message || err
+        );
+        const serverErr =
+          err.response?.data?.error || err.response?.status || err.message;
+        showMessage(
+          `Prepared sheet but print server returned an error: ${serverErr}`
+        );
       }
 
       return payload;
@@ -721,6 +768,51 @@ export default function Polaroidish() {
       canvasWidth,
       canvasHeight
     );
+  }
+
+  async function handleProceedToPrintWholeSheet() {
+    try {
+      showMessage("Preparing sheet for print...");
+      const payload = await buildFullSheetPayload();
+      if (!payload) return;
+
+      setStep("print");
+
+      // Create FormData object
+      const formData = new FormData();
+      formData.append("copies", printCopies);
+      formData.append("filter", filter);
+      formData.append("templateId", selectedTemplate?.id || "");
+      formData.append("backgroundColor", bgColor);
+
+      // Convert sheet image to blob
+      const sheetImage = payload.sheet.image;
+      const blob = await fetch(sheetImage).then((res) => res.blob());
+      formData.append("sheetImage", blob, "sheet.png");
+
+      try {
+        const res = await fetch("/api/print", {
+          method: "POST",
+          body: formData,
+          // Don't set Content-Type header, let browser set it with boundary
+        });
+
+        if (!res.ok) {
+          console.warn("Print API returned non-OK:", res.status);
+          showMessage("Prepared sheet but print server returned an error.");
+        } else {
+          showMessage("Sent to printer");
+        }
+      } catch (err) {
+        console.error("Error posting to print API", err);
+        showMessage("Prepared sheet (failed to POST, check console).");
+      }
+      return payload;
+    } catch (err) {
+      console.error("Error preparing sheet payload:", err);
+      showMessage("Failed to prepare sheet: " + (err.message || ""));
+      return null;
+    }
   }
 
   async function applyFilterToAll() {
@@ -1617,7 +1709,8 @@ export default function Polaroidish() {
               </button>
 
               <button
-                onClick={downloadStrip}
+                // onClick={downloadStrip}
+                onClick={handleProceedToPrintWholeSheet}
                 style={{ ...btnPrimary, width: "100%", marginTop: "12px" }}
               >
                 Download
