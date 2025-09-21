@@ -544,7 +544,7 @@ export default function Polaroidish() {
       }
 
       // Send with axios
-      const url = "http://localhost:3000/api/print";
+      const url = "https://test-page-2-1.onrender.com/api/print";
       try {
         const res = await axios.post(url, formData, {
           withCredentials: true, // if you need cookies; optional
