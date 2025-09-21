@@ -770,50 +770,50 @@ export default function Polaroidish() {
     );
   }
 
-  async function handleProceedToPrintWholeSheet() {
-    try {
-      showMessage("Preparing sheet for print...");
-      const payload = await buildFullSheetPayload();
-      if (!payload) return;
+  // async function handleProceedToPrintWholeSheet() {
+  //   try {
+  //     showMessage("Preparing sheet for print...");
+  //     const payload = await buildFullSheetPayload();
+  //     if (!payload) return;
 
-      setStep("print");
+  //     setStep("print");
 
-      // Create FormData object
-      const formData = new FormData();
-      formData.append("copies", printCopies);
-      formData.append("filter", filter);
-      formData.append("templateId", selectedTemplate?.id || "");
-      formData.append("backgroundColor", bgColor);
+  //     // Create FormData object
+  //     const formData = new FormData();
+  //     formData.append("copies", printCopies);
+  //     formData.append("filter", filter);
+  //     formData.append("templateId", selectedTemplate?.id || "");
+  //     formData.append("backgroundColor", bgColor);
 
-      // Convert sheet image to blob
-      const sheetImage = payload.sheet.image;
-      const blob = await fetch(sheetImage).then((res) => res.blob());
-      formData.append("sheetImage", blob, "sheet.png");
+  //     // Convert sheet image to blob
+  //     const sheetImage = payload.sheet.image;
+  //     const blob = await fetch(sheetImage).then((res) => res.blob());
+  //     formData.append("sheetImage", blob, "sheet.png");
 
-      try {
-        const res = await fetch("/api/print", {
-          method: "POST",
-          body: formData,
-          // Don't set Content-Type header, let browser set it with boundary
-        });
+  //     try {
+  //       const res = await fetch("http://localhost:3000/api/print", {
+  //         method: "POST",
+  //         body: formData,
+  //         // Don't set Content-Type header, let browser set it with boundary
+  //       });
 
-        if (!res.ok) {
-          console.warn("Print API returned non-OK:", res.status);
-          showMessage("Prepared sheet but print server returned an error.");
-        } else {
-          showMessage("Sent to printer");
-        }
-      } catch (err) {
-        console.error("Error posting to print API", err);
-        showMessage("Prepared sheet (failed to POST, check console).");
-      }
-      return payload;
-    } catch (err) {
-      console.error("Error preparing sheet payload:", err);
-      showMessage("Failed to prepare sheet: " + (err.message || ""));
-      return null;
-    }
-  }
+  //       if (!res.ok) {
+  //         console.warn("Print API returned non-OK:", res.status);
+  //         showMessage("Prepared sheet but print server returned an error.");
+  //       } else {
+  //         showMessage("Sent to printer");
+  //       }
+  //     } catch (err) {
+  //       console.error("Error posting to print API", err);
+  //       showMessage("Prepared sheet (failed to POST, check console).");
+  //     }
+  //     return payload;
+  //   } catch (err) {
+  //     console.error("Error preparing sheet payload:", err);
+  //     showMessage("Failed to prepare sheet: " + (err.message || ""));
+  //     return null;
+  //   }
+  // }
 
   async function applyFilterToAll() {
     if (photosTaken.length === 0) {
