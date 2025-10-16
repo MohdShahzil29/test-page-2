@@ -3,48 +3,29 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import formidable from "formidable";
-import fs from "fs";
-import path from "path";
+import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 const app = express();
 
-/**
- * CORS configuration:
- * - If ALLOWED_ORIGINS is set (comma separated), we allow only those origins and enable credentials.
- * - Otherwise we allow all origins (*) but disable credentials (browsers won't allow credentials with *).
- *
- * To enable cookies/credentials, set ALLOWED_ORIGINS e.g.
- * ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:3000
- */
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
-  : null;
+// Cloudinary Configuration
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-if (allowedOrigins && allowedOrigins.length > 0) {
-  app.use(
-    cors({
-      origin: function (origin, callback) {
-        // allow requests with no origin (like curl or server-to-server)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
-        return callback(new Error("CORS policy: Origin not allowed"));
-      },
-      methods: ["GET", "POST"],
-      credentials: true,
-    })
-  );
-} else {
-  // wildcard, no credentials
-  app.use(
-    cors({
-      origin: "*",
-      methods: ["GET", "POST"],
-      credentials: false,
-    })
-  );
-}
+console.log("✅ Cloudinary configured:", process.env.CLOUDINARY_CLOUD_NAME);
+
+// Middleware
+app.use(
+  cors({
+    origin: "*", // Development ke liye, production mei specific domain daalna
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "50mb" })); // Base64 images ke liye important
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Basic logging middleware
 app.use((req, res, next) => {
@@ -60,7 +41,6 @@ app.use((req, res, next) => {
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI, {
-      // optional: keep these for compatibility
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
@@ -72,155 +52,304 @@ const connectDB = async () => {
 };
 connectDB();
 
-// Ensure uploads dir exists (absolute)
-const uploadsDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Serve uploaded files statically so they can be previewed if needed
-app.use("/uploads", express.static(uploadsDir));
-
-// Mongoose schema & model
-const printSchema = new mongoose.Schema({
-  // each document represents a single physical printed copy (so copies: 1)
-  copies: { type: Number, default: 1 },
-  copyIndex: { type: Number, default: 1 }, // which copy (1..N)
-  filter: String,
-  templateId: String,
-  backgroundColor: String,
-  sheetImagePath: String, // local file path on server
-  originalFilename: String,
-  mimetype: String,
-  size: Number,
-  createdAt: { type: Date, default: Date.now },
-});
-const Print = mongoose.model("Print", printSchema);
-
 // Health endpoint
-app.get("/", (req, res) => res.send("Hello, Express + MongoDB is working 🚀"));
+app.get("/", (req, res) => {
+  res.json({
+    status: "success",
+    message: "Photo Booth API is working 🚀",
+    cloudinary: cloudinary.config().cloud_name ? "Connected" : "Not Connected",
+  });
+});
 
-// Optional: list recent prints (for debug)
-app.get("/prints", async (req, res) => {
+// 1. Single Image Upload (Base64)
+app.post("/api/upload-image", async (req, res) => {
   try {
-    const prints = await Print.find().sort({ createdAt: -1 }).limit(50).lean();
-    // attach public URL for the uploaded file if present
-    const hostBase = `${req.protocol}://${req.get("host")}`;
-    const mapped = prints.map((p) => ({
-      ...p,
-      sheetImageUrl: p.sheetImagePath
-        ? `${hostBase}/uploads/${path.basename(p.sheetImagePath)}`
-        : null,
-    }));
-    res.json({ success: true, count: mapped.length, data: mapped });
-  } catch (err) {
-    console.error("Error fetching prints:", err);
-    res.status(500).json({ success: false, error: "Error fetching prints" });
+    const { image, folder = "photo-booth", filename } = req.body;
+
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        error: "No image data provided",
+      });
+    }
+
+    console.log("📤 Uploading single image to Cloudinary...");
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(image, {
+      folder: folder,
+      resource_type: "auto",
+      public_id: filename || undefined,
+      transformation: [{ quality: "auto:good" }, { fetch_format: "auto" }],
+    });
+
+    console.log("✅ Image uploaded:", result.public_id);
+
+    res.json({
+      success: true,
+      message: "Image uploaded successfully",
+      data: {
+        url: result.secure_url,
+        public_id: result.public_id,
+        width: result.width,
+        height: result.height,
+        format: result.format,
+        size: result.bytes,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Upload error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Upload failed",
+      message: error.message,
+    });
   }
 });
 
-/**
- * POST /api/print
- * Expects multipart/form-data with fields:
- * - copies (number) : how many printed copies desired (N)
- * - filter, templateId, backgroundColor (strings)
- * - sheetImage  : can be appended multiple times (one image per copy ideally)
- *
- * Behavior:
- * - Accepts multiple uploaded files (formidable 'multiples: true').
- * - If uploaded files < copies, it repeats last uploaded file for remaining copies.
- * - Inserts N documents into MongoDB (one per copy) using insertMany.
- */
-app.post("/api/print", (req, res) => {
-  const form = formidable({
-    uploadDir: uploadsDir,
-    keepExtensions: true,
-    maxFileSize: 100 * 1024 * 1024, // 100MB limit (adjust as needed)
-    multiples: true,
-  });
+// 2. Multiple Images Upload (Batch)
+app.post("/api/upload-multiple", async (req, res) => {
+  try {
+    const { images, folder = "photo-booth", sessionId } = req.body;
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      console.error("Error parsing form:", err);
-      return res.status(500).json({ error: "Error processing request" });
-    }
-
-    // helper: if field arrived as array -> take first element
-    const asScalar = (v) => (v == null ? v : Array.isArray(v) ? v[0] : v);
-
-    const copiesRequested = Math.max(
-      1,
-      parseInt(asScalar(fields.copies) || "1", 10)
-    );
-    const MAX_COPIES = parseInt(process.env.MAX_COPIES || "200", 10); // safety cap
-    const copies = Math.min(copiesRequested, MAX_COPIES);
-
-    const filter = asScalar(fields.filter) || "";
-    const templateId = asScalar(fields.templateId) || "";
-    const backgroundColor = asScalar(fields.backgroundColor) || "";
-
-    // Normalize files -> ensure array
-    let sheetFiles = files?.sheetImage || [];
-    if (!Array.isArray(sheetFiles)) sheetFiles = [sheetFiles];
-    // Filter out any undefined/null produced by parse
-    sheetFiles = sheetFiles.filter(Boolean);
-
-    if (sheetFiles.length === 0) {
-      // No files uploaded: return error (frontend should send the clicked photos)
-      return res
-        .status(400)
-        .json({ error: "No sheet images uploaded. Please attach images." });
-    }
-
-    try {
-      const docs = [];
-      for (let i = 0; i < copies; i++) {
-        // choose corresponding file if provided, otherwise reuse last file
-        const fileObj = sheetFiles[i] || sheetFiles[sheetFiles.length - 1];
-        const filepath = fileObj.filepath || fileObj.path || null;
-        const originalFilename =
-          fileObj.originalFilename ||
-          fileObj.newFilename ||
-          fileObj.name ||
-          null;
-        const mimetype = fileObj.mimetype || fileObj.type || null;
-        const size = fileObj.size || null;
-
-        docs.push({
-          copies: 1,
-          copyIndex: i + 1,
-          filter,
-          templateId,
-          backgroundColor,
-          sheetImagePath: filepath,
-          originalFilename,
-          mimetype,
-          size,
-          createdAt: new Date(),
-        });
-      }
-
-      const inserted = await Print.insertMany(docs, { ordered: true });
-
-      // Prepare friendly response including public URLs to uploaded images
-      const hostBase = `${req.protocol}://${req.get("host")}`;
-      const result = inserted.map((d) => ({
-        _id: d._id,
-        copyIndex: d.copyIndex,
-        sheetImageUrl: d.sheetImagePath
-          ? `${hostBase}/uploads/${path.basename(d.sheetImagePath)}`
-          : null,
-      }));
-
-      return res.json({
-        success: true,
-        insertedCount: inserted.length,
-        items: result,
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "No images array provided or array is empty",
       });
-    } catch (saveErr) {
-      console.error("Error inserting print documents:", saveErr);
-      return res.status(500).json({ error: "Error saving print data" });
     }
+
+    console.log(`📤 Uploading ${images.length} images to Cloudinary...`);
+
+    // Upload all images in parallel
+    const uploadPromises = images.map((image, index) =>
+      cloudinary.uploader
+        .upload(image, {
+          folder: sessionId ? `${folder}/${sessionId}` : folder,
+          resource_type: "auto",
+          public_id: `photo_${Date.now()}_${index}`,
+          transformation: [{ quality: "auto:good" }, { fetch_format: "auto" }],
+        })
+        .catch((err) => {
+          console.error(`❌ Failed to upload image ${index}:`, err.message);
+          return { error: true, message: err.message, index };
+        })
+    );
+
+    const results = await Promise.all(uploadPromises);
+
+    // Filter successful uploads
+    const successfulUploads = results.filter((r) => !r.error);
+    const failedUploads = results.filter((r) => r.error);
+
+    console.log(
+      `✅ Successfully uploaded ${successfulUploads.length}/${images.length} images`
+    );
+
+    const urls = successfulUploads.map((result) => ({
+      url: result.secure_url,
+      public_id: result.public_id,
+      width: result.width,
+      height: result.height,
+      format: result.format,
+      size: result.bytes,
+    }));
+
+    res.json({
+      success: true,
+      message: `Uploaded ${successfulUploads.length} images successfully`,
+      count: urls.length,
+      images: urls,
+      failed: failedUploads.length,
+    });
+  } catch (error) {
+    console.error("❌ Batch upload error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Batch upload failed",
+      message: error.message,
+    });
+  }
+});
+
+// 3. Upload with Custom Transformations
+app.post("/api/upload-with-transform", async (req, res) => {
+  try {
+    const {
+      image,
+      folder = "photo-booth",
+      filter,
+      bgColor,
+      width,
+      height,
+    } = req.body;
+
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        error: "No image data provided",
+      });
+    }
+
+    console.log("📤 Uploading image with transformations...");
+
+    // Build transformations array
+    const transformations = [
+      { quality: "auto:good" },
+      { fetch_format: "auto" },
+    ];
+
+    if (width || height) {
+      transformations.push({
+        width: width || undefined,
+        height: height || undefined,
+        crop: "limit",
+      });
+    }
+
+    if (filter === "bw" || filter === "grayscale") {
+      transformations.push({ effect: "grayscale" });
+    } else if (filter === "sepia") {
+      transformations.push({ effect: "sepia" });
+    }
+
+    if (bgColor) {
+      transformations.push({ background: bgColor });
+    }
+
+    const result = await cloudinary.uploader.upload(image, {
+      folder: folder,
+      resource_type: "auto",
+      transformation: transformations,
+    });
+
+    console.log("✅ Image uploaded with transformations:", result.public_id);
+
+    res.json({
+      success: true,
+      message: "Image uploaded with transformations",
+      data: {
+        url: result.secure_url,
+        public_id: result.public_id,
+        width: result.width,
+        height: result.height,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Transform upload error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Transform upload failed",
+      message: error.message,
+    });
+  }
+});
+
+// 4. Delete Single Image
+app.delete("/api/delete-image/:publicId", async (req, res) => {
+  try {
+    const publicId = req.params.publicId.replace(/--/g, "/");
+
+    console.log("🗑️ Deleting image:", publicId);
+
+    const result = await cloudinary.uploader.destroy(publicId);
+
+    if (result.result === "ok") {
+      console.log("✅ Image deleted successfully");
+      res.json({
+        success: true,
+        message: "Image deleted successfully",
+        result: result,
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: "Image not found",
+        result: result,
+      });
+    }
+  } catch (error) {
+    console.error("❌ Delete error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Delete failed",
+      message: error.message,
+    });
+  }
+});
+
+// 5. Delete Multiple Images
+app.post("/api/delete-multiple", async (req, res) => {
+  try {
+    const { publicIds } = req.body;
+
+    if (!publicIds || !Array.isArray(publicIds)) {
+      return res.status(400).json({
+        success: false,
+        error: "No publicIds array provided",
+      });
+    }
+
+    console.log(`🗑️ Deleting ${publicIds.length} images...`);
+
+    const deletePromises = publicIds.map((id) =>
+      cloudinary.uploader.destroy(id).catch((err) => ({
+        error: true,
+        id,
+        message: err.message,
+      }))
+    );
+
+    const results = await Promise.all(deletePromises);
+    const successful = results.filter((r) => r.result === "ok").length;
+
+    console.log(`✅ Deleted ${successful}/${publicIds.length} images`);
+
+    res.json({
+      success: true,
+      message: `Deleted ${successful} images`,
+      deleted: successful,
+      total: publicIds.length,
+      results: results,
+    });
+  } catch (error) {
+    console.error("❌ Batch delete error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Batch delete failed",
+      message: error.message,
+    });
+  }
+});
+
+// 6. Get Image Info
+app.get("/api/image-info/:publicId", async (req, res) => {
+  try {
+    const publicId = req.params.publicId.replace(/--/g, "/");
+
+    const result = await cloudinary.api.resource(publicId);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("❌ Get info error:", error.message);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get image info",
+      message: error.message,
+    });
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error("💥 Unhandled error:", err);
+  res.status(500).json({
+    success: false,
+    error: "Internal server error",
+    message: err.message,
   });
 });
 
