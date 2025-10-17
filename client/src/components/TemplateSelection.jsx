@@ -874,7 +874,7 @@ export default function TemplateSelection({
               position: "relative",
             }}
           >
-            How many copies do you want?
+            Please select no of Copies (strips)
           </h3>
 
           <div
@@ -886,7 +886,7 @@ export default function TemplateSelection({
               marginBottom: "18px",
             }}
           >
-            {[2, 3, 4].map((num) => {
+            {[2, 4, 6].map((num) => {
               const isSelectedNum = printCopies === num;
 
               return (

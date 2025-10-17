@@ -6,6 +6,7 @@ import CaptureScreen from "./CaptureScreen";
 import PreviewScreen from "./PreviewScreen";
 import PrintScreen from "./PrintScreen";
 import MessageBox from "./MessageBox";
+import { uploadWithTransform } from "../../utils/cloudinaryApi";
 
 export default function Polaroidish() {
   // All refs, states, constants remain same as original
@@ -591,134 +592,134 @@ export default function Polaroidish() {
     });
   }
 
-  async function buildFullSheetPayload() {
-    const usingLayout = layouts.vertical[totalFrames];
-    if (!usingLayout) {
-      throw new Error("Invalid layout for current frames");
-    }
-    if (!photosTaken || photosTaken.length === 0) {
-      showMessage("No photos captured to print");
-      return null;
-    }
+  // async function buildFullSheetPayload() {
+  //   const usingLayout = layouts.vertical[totalFrames];
+  //   if (!usingLayout) {
+  //     throw new Error("Invalid layout for current frames");
+  //   }
+  //   if (!photosTaken || photosTaken.length === 0) {
+  //     showMessage("No photos captured to print");
+  //     return null;
+  //   }
 
-    const finalW = usingLayout.finalWidth;
-    const finalH = usingLayout.finalHeight;
-    const slotW = Math.round(usingLayout.photoWidth);
-    const slotH = Math.round(usingLayout.photoHeight);
-    const numCols = usingLayout.numCols;
-    const numRows = usingLayout.numRows;
+  //   const finalW = usingLayout.finalWidth;
+  //   const finalH = usingLayout.finalHeight;
+  //   const slotW = Math.round(usingLayout.photoWidth);
+  //   const slotH = Math.round(usingLayout.photoHeight);
+  //   const numCols = usingLayout.numCols;
+  //   const numRows = usingLayout.numRows;
 
-    const gapX = Math.round(
-      (usingLayout.finalWidth - numCols * slotW) / (numCols + 1)
-    );
-    const gapY = Math.round(
-      (usingLayout.finalHeight - numRows * slotH) / (numRows + 1)
-    );
-    const gx = Math.max(0, gapX);
-    const gy = Math.max(0, gapY);
+  //   const gapX = Math.round(
+  //     (usingLayout.finalWidth - numCols * slotW) / (numCols + 1)
+  //   );
+  //   const gapY = Math.round(
+  //     (usingLayout.finalHeight - numRows * slotH) / (numRows + 1)
+  //   );
+  //   const gx = Math.max(0, gapX);
+  //   const gy = Math.max(0, gapY);
 
-    const sheetCanvas = document.createElement("canvas");
-    sheetCanvas.width = finalW;
-    sheetCanvas.height = finalH;
-    const ctx = sheetCanvas.getContext("2d");
+  //   const sheetCanvas = document.createElement("canvas");
+  //   sheetCanvas.width = finalW;
+  //   sheetCanvas.height = finalH;
+  //   const ctx = sheetCanvas.getContext("2d");
 
-    ctx.fillStyle = bgColor || COLORS.BASE_WHITE;
-    ctx.fillRect(0, 0, finalW, finalH);
+  //   ctx.fillStyle = bgColor || COLORS.BASE_WHITE;
+  //   ctx.fillRect(0, 0, finalW, finalH);
 
-    const regenerated = await Promise.all(
-      photosTaken.map((p) =>
-        makeFilteredDataUrl(p.raw, filter, slotW, slotH).catch(() => p.raw)
-      )
-    );
+  //   const regenerated = await Promise.all(
+  //     photosTaken.map((p) =>
+  //       makeFilteredDataUrl(p.raw, filter, slotW, slotH).catch(() => p.raw)
+  //     )
+  //   );
 
-    const slots = [];
-    for (let i = 0; i < totalFrames; i++) {
-      const row = Math.floor(i / numCols);
-      const idx = row % regenerated.length;
-      const src = regenerated[idx];
+  //   const slots = [];
+  //   for (let i = 0; i < totalFrames; i++) {
+  //     const row = Math.floor(i / numCols);
+  //     const idx = row % regenerated.length;
+  //     const src = regenerated[idx];
 
-      const column = i % numCols;
-      const y = gy + row * (slotH + gy);
-      const x = gx + column * (slotW + gx);
+  //     const column = i % numCols;
+  //     const y = gy + row * (slotH + gy);
+  //     const x = gx + column * (slotW + gx);
 
-      if (src) {
-        await new Promise((res) => {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => {
-            const drawW = Math.min(slotW, finalW - x);
-            const drawH = Math.min(slotH, finalH - y);
-            ctx.drawImage(img, 0, 0, img.width, img.height, x, y, drawW, drawH);
-            res(true);
-          };
-          img.onerror = () => res(true);
-          img.src = src;
-        });
-      }
+  //     if (src) {
+  //       await new Promise((res) => {
+  //         const img = new Image();
+  //         img.crossOrigin = "anonymous";
+  //         img.onload = () => {
+  //           const drawW = Math.min(slotW, finalW - x);
+  //           const drawH = Math.min(slotH, finalH - y);
+  //           ctx.drawImage(img, 0, 0, img.width, img.height, x, y, drawW, drawH);
+  //           res(true);
+  //         };
+  //         img.onerror = () => res(true);
+  //         img.src = src;
+  //       });
+  //     }
 
-      slots.push({
-        index: i,
-        column,
-        row,
-        x,
-        y,
-        width: slotW,
-        height: slotH,
-        photoIndex: idx,
-        image: src,
-      });
-    }
+  //     slots.push({
+  //       index: i,
+  //       column,
+  //       row,
+  //       x,
+  //       y,
+  //       width: slotW,
+  //       height: slotH,
+  //       photoIndex: idx,
+  //       image: src,
+  //     });
+  //   }
 
-    const columns = Array.from({ length: numCols }).map((_, colIndex) =>
-      slots
-        .filter((s) => s.column === colIndex)
-        .sort((a, b) => a.row - b.row)
-        .map((s) => ({
-          index: s.index,
-          row: s.row,
-          image: s.image,
-          width: s.width,
-          height: s.height,
-        }))
-    );
+  //   const columns = Array.from({ length: numCols }).map((_, colIndex) =>
+  //     slots
+  //       .filter((s) => s.column === colIndex)
+  //       .sort((a, b) => a.row - b.row)
+  //       .map((s) => ({
+  //         index: s.index,
+  //         row: s.row,
+  //         image: s.image,
+  //         width: s.width,
+  //         height: s.height,
+  //       }))
+  //   );
 
-    const sheetDataUrl = sheetCanvas.toDataURL("image/png");
+  //   const sheetDataUrl = sheetCanvas.toDataURL("image/png");
 
-    const payload = {
-      type: "polaroidish-full-sheet",
-      createdAt: new Date().toISOString(),
-      templateId: selectedTemplate?.id || null,
-      filter,
-      backgroundColor: bgColor,
-      sheet: {
-        width: finalW,
-        height: finalH,
-        units: "px",
-        dpi: 300,
-        fileType: "png",
-        image: sheetDataUrl,
-      },
-      page: {
-        pageIndex: 0,
-        slots: slots.map((s) => ({
-          index: s.index,
-          column: s.column,
-          row: s.row,
-          x: s.x,
-          y: s.y,
-          width: s.width,
-          height: s.height,
-          photoIndex: s.photoIndex,
-          image: s.image,
-        })),
-      },
-      columns,
-      printCopies,
-      originalPhotosCount: photosTaken.length,
-    };
+  //   const payload = {
+  //     type: "polaroidish-full-sheet",
+  //     createdAt: new Date().toISOString(),
+  //     templateId: selectedTemplate?.id || null,
+  //     filter,
+  //     backgroundColor: bgColor,
+  //     sheet: {
+  //       width: finalW,
+  //       height: finalH,
+  //       units: "px",
+  //       dpi: 300,
+  //       fileType: "png",
+  //       image: sheetDataUrl,
+  //     },
+  //     page: {
+  //       pageIndex: 0,
+  //       slots: slots.map((s) => ({
+  //         index: s.index,
+  //         column: s.column,
+  //         row: s.row,
+  //         x: s.x,
+  //         y: s.y,
+  //         width: s.width,
+  //         height: s.height,
+  //         photoIndex: s.photoIndex,
+  //         image: s.image,
+  //       })),
+  //     },
+  //     columns,
+  //     printCopies,
+  //     originalPhotosCount: photosTaken.length,
+  //   };
 
-    return payload;
-  }
+  //   return payload;
+  // }
 
   // async function handleProceedToPrintWholeSheet() {
   //   try {
@@ -790,6 +791,165 @@ export default function Polaroidish() {
   // }
 
   // console.log("Print payload", handleProceedToPrintWholeSheet);
+
+  async function buildFullSheetPayload() {
+    const usingLayout = layouts.vertical[totalFrames];
+    if (!usingLayout) {
+      throw new Error("Invalid layout for current frames");
+    }
+    if (!photosTaken || photosTaken.length === 0) {
+      showMessage("No photos captured to print");
+      return null;
+    }
+
+    const finalW = usingLayout.finalWidth;
+    const finalH = usingLayout.finalHeight;
+    const slotW = Math.round(usingLayout.photoWidth);
+    const slotH = Math.round(usingLayout.photoHeight);
+    const numCols = usingLayout.numCols;
+    const numRows = usingLayout.numRows;
+
+    const gapX = Math.round(
+      (usingLayout.finalWidth - numCols * slotW) / (numCols + 1)
+    );
+    const gapY = Math.round(
+      (usingLayout.finalHeight - numRows * slotH) / (numRows + 1)
+    );
+    const gx = Math.max(0, gapX);
+    const gy = Math.max(0, gapY);
+
+    const sheetCanvas = document.createElement("canvas");
+    sheetCanvas.width = finalW;
+    sheetCanvas.height = finalH;
+    const ctx = sheetCanvas.getContext("2d");
+
+    ctx.fillStyle = bgColor || COLORS.BASE_WHITE;
+    ctx.fillRect(0, 0, finalW, finalH);
+
+    const regenerated = await Promise.all(
+      photosTaken.map((p) =>
+        makeFilteredDataUrl(p.raw, filter, slotW, slotH).catch(() => p.raw)
+      )
+    );
+
+    // ✅ Upload filtered images to Cloudinary and get URLs
+    const filteredImageUrls = [];
+    for (let idx = 0; idx < regenerated.length; idx++) {
+      try {
+        const result = await uploadWithTransform(regenerated[idx], {
+          folder: "photo-booth/filtered",
+          filter: filter === "none" ? undefined : filter,
+          width: slotW,
+          height: slotH,
+        });
+
+        if (result.success) {
+          filteredImageUrls.push(result.data.url);
+          console.log(
+            `✅ Uploaded filtered image ${idx + 1}:`,
+            result.data.url
+          );
+        } else {
+          filteredImageUrls.push(null);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to upload filtered image ${idx + 1}:`, error);
+        filteredImageUrls.push(null);
+      }
+    }
+
+    const slots = [];
+    for (let i = 0; i < totalFrames; i++) {
+      const row = Math.floor(i / numCols);
+      const idx = row % regenerated.length;
+      const src = regenerated[idx];
+
+      const column = i % numCols;
+      const y = gy + row * (slotH + gy);
+      const x = gx + column * (slotW + gx);
+
+      if (src) {
+        await new Promise((res) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            const drawW = Math.min(slotW, finalW - x);
+            const drawH = Math.min(slotH, finalH - y);
+            ctx.drawImage(img, 0, 0, img.width, img.height, x, y, drawW, drawH);
+            res(true);
+          };
+          img.onerror = () => res(true);
+          img.src = src;
+        });
+      }
+
+      slots.push({
+        index: i,
+        column,
+        row,
+        x,
+        y,
+        width: slotW,
+        height: slotH,
+        photoIndex: idx,
+        image: src,
+      });
+    }
+
+    const columns = Array.from({ length: numCols }).map((_, colIndex) =>
+      slots
+        .filter((s) => s.column === colIndex)
+        .sort((a, b) => a.row - b.row)
+        .map((s) => ({
+          index: s.index,
+          row: s.row,
+          image: s.image,
+          width: s.width,
+          height: s.height,
+        }))
+    );
+
+    const sheetDataUrl = sheetCanvas.toDataURL("image/png");
+
+    // ✅ Updated payload with filteredImages array included
+    const payload = {
+      type: "polaroidish-full-sheet",
+      createdAt: new Date().toISOString(),
+      templateId: selectedTemplate?.id || null,
+      filter,
+      backgroundColor: bgColor,
+      filteredImages: filteredImageUrls.filter((url) => url !== null), // ✅ Added here
+      copies: printCopies, // ✅ Added copies
+      templateSelected: selectedTemplate?.id || null, // ✅ Added templateSelected
+      sheet: {
+        width: finalW,
+        height: finalH,
+        units: "px",
+        dpi: 300,
+        fileType: "png",
+        image: sheetDataUrl,
+      },
+      page: {
+        pageIndex: 0,
+        slots: slots.map((s) => ({
+          index: s.index,
+          column: s.column,
+          row: s.row,
+          x: s.x,
+          y: s.y,
+          width: s.width,
+          height: s.height,
+          photoIndex: s.photoIndex,
+          image: s.image,
+        })),
+      },
+      columns,
+      printCopies,
+      originalPhotosCount: photosTaken.length,
+    };
+
+    return payload;
+  }
 
   async function handleProceedToPrintWholeSheet() {
     try {
